@@ -376,6 +376,9 @@
 |---------|-------|----------|------------|-----------------|
 | `registration.confirmed` | `registrations` | registration | notification | `#/components/messages/RegistrationConfirmed` |
 | `registration.cancelled` | `registrations` | registration | notification | `#/components/messages/RegistrationCancelled` |
+| `registration.waitlisted` | `registrations` | registration | notification | `#/components/messages/RegistrationWaitlisted` |
+| `registration.waitlist_promoted` | `registrations` | registration | notification | `#/components/messages/WaitlistPromoted` |
 | `attendance.marked` | `attendance` | attendance | profile | `#/components/messages/AttendanceMarked` |
 | `attendance.no_show` | `attendance` | attendance | profile | `#/components/messages/AttendanceNoShow` |
+| `event.published` | `events` | event | notification | `#/components/messages/EventPublished` |
 | `event.cancelled` | `events` | event | registration, notification | `#/components/messages/EventCancelled` |
