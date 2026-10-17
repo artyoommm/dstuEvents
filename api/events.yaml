@@ -1,0 +1,278 @@
+asyncapi: 2.6.0
+
+info:
+  title: DSTU Events — асинхронные события
+  version: 1.0.0
+  description: |
+    Асинхронные события, циркулирующие между сервисами DSTU Events
+    через RabbitMQ. Все события используют единый конверт EventEnvelope.
+    Обмен идёт через topic exchanges.
+  license:
+    name: Educational project
+    url: https://example.org/license
+
+defaultContentType: application/json
+
+servers:
+  production:
+    url: amqp://rabbitmq:5672
+    protocol: amqp
+    description: RabbitMQ broker
+
+channels:
+
+  registrations:
+    description: События жизненного цикла регистраций
+    publish:
+      operationId: publishRegistrationEvent
+      summary: Публикуется registration-service
+      message:
+        oneOf:
+          - $ref: '#/components/messages/RegistrationConfirmed'
+          - $ref: '#/components/messages/RegistrationCancelled'
+          - $ref: '#/components/messages/RegistrationWaitlisted'
+          - $ref: '#/components/messages/WaitlistPromoted'
+    subscribe:
+      operationId: subscribeRegistrationEvents
+      summary: Подписчик — notification-service
+      message:
+        oneOf:
+          - $ref: '#/components/messages/RegistrationConfirmed'
+          - $ref: '#/components/messages/RegistrationCancelled'
+          - $ref: '#/components/messages/RegistrationWaitlisted'
+          - $ref: '#/components/messages/WaitlistPromoted'
+
+  attendance:
+    description: События посещаемости
+    publish:
+      operationId: publishAttendanceEvent
+      summary: Публикуется attendance-service
+      message:
+        oneOf:
+          - $ref: '#/components/messages/AttendanceMarked'
+          - $ref: '#/components/messages/AttendanceNoShow'
+    subscribe:
+      operationId: subscribeAttendanceEvents
+      summary: Подписчик — profile-service
+      message:
+        oneOf:
+          - $ref: '#/components/messages/AttendanceMarked'
+          - $ref: '#/components/messages/AttendanceNoShow'
+
+  events:
+    description: События мероприятий
+    publish:
+      operationId: publishEventEvent
+      summary: Публикуется event-service
+      message:
+        oneOf:
+          - $ref: '#/components/messages/EventPublished'
+          - $ref: '#/components/messages/EventCancelled'
+    subscribe:
+      operationId: subscribeEventEvents
+      summary: Подписчики — registration-service, notification-service
+      message:
+        oneOf:
+          - $ref: '#/components/messages/EventPublished'
+          - $ref: '#/components/messages/EventCancelled'
+
+components:
+
+  messages:
+
+    RegistrationConfirmed:
+      name: registration.confirmed
+      title: Регистрация подтверждена
+      description: Публикуется после успешной записи. Триггерит отправку письма с QR-кодом.
+      payload:
+        $ref: '#/components/schemas/RegistrationConfirmedPayload'
+
+    RegistrationCancelled:
+      name: registration.cancelled
+      title: Регистрация отменена
+      description: Публикуется при отмене студентом, админом или при отмене мероприятия.
+      payload:
+        $ref: '#/components/schemas/RegistrationCancelledPayload'
+
+    RegistrationWaitlisted:
+      name: registration.waitlisted
+      title: Студент в листе ожидания
+      description: Публикуется, если на момент записи свободных мест не было.
+      payload:
+        $ref: '#/components/schemas/RegistrationWaitlistedPayload'
+
+    WaitlistPromoted:
+      name: registration.waitlist_promoted
+      title: Студент приглашён из листа ожидания
+      description: Публикуется, когда освободилось место и студент получил 2 часа на подтверждение.
+      payload:
+        $ref: '#/components/schemas/WaitlistPromotedPayload'
+
+    AttendanceMarked:
+      name: attendance.marked
+      title: Посещение засчитано
+      description: Публикуется после успешного сканирования QR. Триггерит начисление баллов.
+      payload:
+        $ref: '#/components/schemas/AttendanceMarkedPayload'
+
+    AttendanceNoShow:
+      name: attendance.no_show
+      title: Неявка зафиксирована
+      description: Публикуется при отметке неявки. Триггерит списание баллов.
+      payload:
+        $ref: '#/components/schemas/AttendanceNoShowPayload'
+
+    EventPublished:
+      name: event.published
+      title: Мероприятие опубликовано
+      description: Публикуется при публикации мероприятия в афише. Используется notification для анонсов.
+      payload:
+        $ref: '#/components/schemas/EventPublishedPayload'
+
+    EventCancelled:
+      name: event.cancelled
+      title: Мероприятие отменено
+      description: Публикуется при отмене. Триггерит массовую отмену регистраций и рассылку.
+      payload:
+        $ref: '#/components/schemas/EventCancelledPayload'
+
+  schemas:
+
+    EventEnvelope:
+      type: object
+      description: Единый конверт для всех событий системы
+      required: [eventId, eventType, schemaVersion, occurredAt, correlationId, payload]
+      properties:
+        eventId:
+          type: string
+          format: uuid
+          description: Уникальный ID события (для идемпотентности)
+        eventType:
+          type: string
+          example: registration.confirmed
+        schemaVersion:
+          type: integer
+          minimum: 1
+          default: 1
+        occurredAt:
+          type: string
+          format: date-time
+        correlationId:
+          type: string
+          format: uuid
+          description: ID для сквозной трассировки
+        payload:
+          type: object
+
+    RegistrationConfirmedPayload:
+      allOf:
+        - $ref: '#/components/schemas/EventEnvelope'
+        - type: object
+          properties:
+            payload:
+              type: object
+              required: [registrationId, studentId, eventId, qrToken]
+              properties:
+                registrationId: { type: string, format: uuid }
+                studentId:      { type: string, format: uuid }
+                eventId:        { type: string, format: uuid }
+                qrToken:        { type: string }
+                studentEmail:   { type: string, format: email, description: Для notification-service }
+
+    RegistrationCancelledPayload:
+      allOf:
+        - $ref: '#/components/schemas/EventEnvelope'
+        - type: object
+          properties:
+            payload:
+              type: object
+              required: [registrationId, studentId, eventId, reason]
+              properties:
+                registrationId: { type: string, format: uuid }
+                studentId:      { type: string, format: uuid }
+                eventId:        { type: string, format: uuid }
+                reason:
+                  type: string
+                  enum: [STUDENT_CANCELLED, EVENT_CANCELLED, BANNED_STUDENT, EXPIRED]
+
+    RegistrationWaitlistedPayload:
+      allOf:
+        - $ref: '#/components/schemas/EventEnvelope'
+        - type: object
+          properties:
+            payload:
+              type: object
+              required: [registrationId, studentId, eventId, position]
+              properties:
+                registrationId: { type: string, format: uuid }
+                studentId:      { type: string, format: uuid }
+                eventId:        { type: string, format: uuid }
+                position:       { type: integer, minimum: 1 }
+
+    WaitlistPromotedPayload:
+      allOf:
+        - $ref: '#/components/schemas/EventEnvelope'
+        - type: object
+          properties:
+            payload:
+              type: object
+              required: [registrationId, studentId, eventId, expiresAt]
+              properties:
+                registrationId: { type: string, format: uuid }
+                studentId:      { type: string, format: uuid }
+                eventId:        { type: string, format: uuid }
+                expiresAt:      { type: string, format: date-time, description: "2 часа на подтверждение" }
+
+    AttendanceMarkedPayload:
+      allOf:
+        - $ref: '#/components/schemas/EventEnvelope'
+        - type: object
+          properties:
+            payload:
+              type: object
+              required: [attendanceId, studentId, eventId, status]
+              properties:
+                attendanceId: { type: string, format: uuid }
+                studentId:    { type: string, format: uuid }
+                eventId:      { type: string, format: uuid }
+                status:       { type: string, const: PRESENT }
+
+    AttendanceNoShowPayload:
+      allOf:
+        - $ref: '#/components/schemas/EventEnvelope'
+        - type: object
+          properties:
+            payload:
+              type: object
+              required: [attendanceId, studentId, eventId, status]
+              properties:
+                attendanceId: { type: string, format: uuid }
+                studentId:    { type: string, format: uuid }
+                eventId:      { type: string, format: uuid }
+                status:       { type: string, const: NO_SHOW }
+
+    EventPublishedPayload:
+      allOf:
+        - $ref: '#/components/schemas/EventEnvelope'
+        - type: object
+          properties:
+            payload:
+              type: object
+              required: [eventId, title, startsAt, venue]
+              properties:
+                eventId:  { type: string, format: uuid }
+                title:    { type: string }
+                startsAt: { type: string, format: date-time }
+                venue:    { type: string, description: "Корпус и аудитория" }
+
+    EventCancelledPayload:
+      allOf:
+        - $ref: '#/components/schemas/EventEnvelope'
+        - type: object
+          properties:
+            payload:
+              type: object
+              required: [eventId, reason]
+              properties:
+                eventId: { type: string, format: uuid }
+                reason:  { type: string, example: ADMIN_CANCELLED }

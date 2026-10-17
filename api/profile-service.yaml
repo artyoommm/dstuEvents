@@ -1,0 +1,243 @@
+openapi: 3.1.0
+
+info:
+  title: profile-service
+  version: 1.0.0
+  description: |
+    Сервис профилей студентов: ФИО, группа, статус, баллы и рейтинг.
+    Основная работа идёт асинхронно — начисление и списание баллов
+    происходит по событиям от attendance-service.
+  license:
+    name: Educational project
+    url: https://example.org/license
+
+servers:
+  - url: /
+    description: API Gateway (public endpoints)
+
+tags:
+  - name: profile
+    description: Профиль и рейтинг текущего студента
+  - name: internal
+    description: Внутренние эндпоинты для других сервисов
+
+security:
+  - bearerAuth: []
+
+paths:
+
+  /api/v1/profile/me:
+    get:
+      tags: [profile]
+      summary: Мой профиль
+      description: Возвращает ФИО, группу, факультет, статус и текущий рейтинг.
+      operationId: getMyProfile
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Профиль студента
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StudentProfile'
+              example:
+                id: "3f6c2b0e-8d1a-4c57-9e2f-5a1b7c9d0e44"
+                fullName: "Иванов Иван Иванович"
+                group: "ИС-21"
+                faculty: "Факультет информатики и вычислительной техники"
+                status: ACTIVE
+                totalPoints: 145
+                rating: 12
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Профиль не найден (студент не активирован)
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /api/v1/profile/me/points:
+    get:
+      tags: [profile]
+      summary: История начислений и списаний баллов
+      operationId: listMyPoints
+      parameters:
+        - name: reason
+          in: query
+          description: Фильтр по причине транзакции
+          schema:
+            type: string
+            enum: [ATTENDANCE, NO_SHOW, MANUAL_ADJUSTMENT, ACHIEVEMENT]
+          example: ATTENDANCE
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Страница транзакций
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedPoints'
+              example:
+                content:
+                  - id: "a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d"
+                    amount: 10
+                    reason: ATTENDANCE
+                    eventId: "9a4d1e2c-6b7f-4a08-b3c5-0e1f2d3c4b5a"
+                    occurredAt: "2026-11-15T14:30:00Z"
+                  - id: "b1c2d3e4-f5a6-7b8c-9d0e-1f2a3b4c5d6e"
+                    amount: -20
+                    reason: NO_SHOW
+                    eventId: "1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d"
+                    occurredAt: "2026-11-10T18:00:00Z"
+                page: 0
+                size: 20
+                totalElements: 2
+                totalPages: 1
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /internal/v1/students/{id}/status:
+    get:
+      tags: [internal]
+      summary: Получить статус студента
+      description: |
+        Вызывается registration-service перед созданием заявки.
+        Если статус BANNED — заявка отклоняется со статусом REJECTED.
+      operationId: getStudentStatus
+      security: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+          example: "3f6c2b0e-8d1a-4c57-9e2f-5a1b7c9d0e44"
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Статус студента
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StudentStatus'
+              example:
+                studentId: "3f6c2b0e-8d1a-4c57-9e2f-5a1b7c9d0e44"
+                status: ACTIVE
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+components:
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT от Keycloak, проверяется на API Gateway
+
+  parameters:
+    CorrelationId:
+      name: X-Correlation-Id
+      in: header
+      required: false
+      schema: { type: string, format: uuid }
+    Page:
+      name: page
+      in: query
+      required: false
+      schema: { type: integer, minimum: 0, default: 0 }
+    Size:
+      name: size
+      in: query
+      required: false
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+
+  responses:
+    BadRequest:
+      description: Некорректный запрос
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    Unauthorized:
+      description: Не авторизован
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    NotFound:
+      description: Ресурс не найден
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+  schemas:
+
+    Problem:
+      type: object
+      required: [type, title, status]
+      properties:
+        type:          { type: string, format: uri }
+        title:         { type: string }
+        status:        { type: integer }
+        detail:        { type: string }
+        instance:      { type: string }
+        correlationId: { type: string, format: uuid }
+      example:
+        type: "https://dstu-events.local/errors/not-found"
+        title: "Student not found"
+        status: 404
+        detail: "Student 3f6c2b0e-8d1a-4c57-9e2f-5a1b7c9d0e44 does not exist"
+        instance: "/internal/v1/students/3f6c2b0e-8d1a-4c57-9e2f-5a1b7c9d0e44/status"
+        correlationId: "3f6c2b0e-8d1a-4c57-9e2f-5a1b7c9d0e44"
+
+    StudentStatusEnum:
+      type: string
+      enum: [ACTIVE, BANNED, GRADUATED]
+
+    StudentProfile:
+      type: object
+      required: [id, fullName, group, faculty, status, totalPoints]
+      properties:
+        id:          { type: string, format: uuid }
+        fullName:    { type: string, minLength: 1, maxLength: 200 }
+        group:       { type: string, minLength: 1, maxLength: 50 }
+        faculty:     { type: string, maxLength: 200 }
+        status:      { $ref: '#/components/schemas/StudentStatusEnum' }
+        totalPoints: { type: integer, minimum: 0 }
+        rating:      { type: integer, minimum: 1, description: "Место в общем рейтинге" }
+
+    StudentStatus:
+      type: object
+      required: [studentId, status]
+      properties:
+        studentId: { type: string, format: uuid }
+        status:    { $ref: '#/components/schemas/StudentStatusEnum' }
+
+    PointsReason:
+      type: string
+      enum: [ATTENDANCE, NO_SHOW, MANUAL_ADJUSTMENT, ACHIEVEMENT]
+
+    PointsTransaction:
+      type: object
+      required: [id, amount, reason, occurredAt]
+      properties:
+        id:         { type: string, format: uuid }
+        amount:     { type: integer, description: "Положительное — начисление, отрицательное — списание" }
+        reason:     { $ref: '#/components/schemas/PointsReason' }
+        eventId:    { type: string, format: uuid }
+        occurredAt: { type: string, format: date-time }
+
+    PaginatedPoints:
+      type: object
+      required: [content, page, size, totalElements, totalPages]
+      properties:
+        content:
+          type: array
+          items: { $ref: '#/components/schemas/PointsTransaction' }
+        page:          { type: integer, minimum: 0 }
+        size:          { type: integer, minimum: 1 }
+        totalElements: { type: integer, minimum: 0 }
+        totalPages:    { type: integer, minimum: 0 }

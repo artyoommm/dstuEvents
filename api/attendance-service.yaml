@@ -1,0 +1,296 @@
+openapi: 3.1.0
+
+info:
+  title: attendance-service
+  version: 1.0.0
+  description: |
+    Сервис посещаемости: приём QR-кодов от волонтёров через мобильную версию сайта,
+    валидация через registration-service, фиксация посещений и неявок.
+  license:
+    name: Educational project
+    url: https://example.org/license
+
+servers:
+  - url: /
+    description: API Gateway (public endpoints)
+
+tags:
+  - name: attendance
+    description: Отметка посещений на мероприятии
+  - name: internal
+    description: Внутренние эндпоинты для админки и отладки
+
+security:
+  - bearerAuth: []
+
+paths:
+
+  /api/v1/attendance/scan:
+    post:
+      tags: [attendance]
+      summary: Отсканировать QR-код на входе
+      description: |
+        Принимает QR-токен от волонтёра. Валидирует его через registration-service,
+        создаёт отметку PRESENT и публикует событие attendance.marked.
+        Идемпотентность по eventId + qrToken в Redis защищает от повторных сканов.
+      operationId: scanQr
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScanQrRequest'
+            example:
+              qrToken: "QR-9a4d1e2c-2026"
+              eventId: "9a4d1e2c-6b7f-4a08-b3c5-0e1f2d3c4b5a"
+              scannedBy: "c1f2d3e4-5a6b-7c8d-9e0f-1a2b3c4d5e6f"
+      responses:
+        '201':
+          description: Посещение зафиксировано
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AttendanceRecord'
+              example:
+                id: "e1f2a3b4-c5d6-7e8f-9a0b-1c2d3e4f5a6b"
+                eventId: "9a4d1e2c-6b7f-4a08-b3c5-0e1f2d3c4b5a"
+                studentId: "3f6c2b0e-8d1a-4c57-9e2f-5a1b7c9d0e44"
+                status: PRESENT
+                markedAt: "2026-11-15T10:05:23Z"
+                markedBy: "c1f2d3e4-5a6b-7c8d-9e0f-1a2b3c4d5e6f"
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: QR-токен не найден
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: Посещение уже отмечено (идемпотентность)
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '410':
+          description: QR-токен просрочен
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /api/v1/attendance/no-show:
+    post:
+      tags: [attendance]
+      summary: Отметить неявку
+      description: |
+        Фиксирует факт, что студент был зарегистрирован, но не пришёл.
+        Публикует событие attendance.no_show — profile-service спишет баллы.
+      operationId: markNoShow
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NoShowRequest'
+            example:
+              registrationId: "b2e0c7f4-1a93-4f0d-8c6e-7d25a1e9f310"
+              eventId: "9a4d1e2c-6b7f-4a08-b3c5-0e1f2d3c4b5a"
+              markedBy: "c1f2d3e4-5a6b-7c8d-9e0f-1a2b3c4d5e6f"
+      responses:
+        '201':
+          description: Неявка зафиксирована
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AttendanceRecord'
+              example:
+                id: "f1e2d3c4-b5a6-9788-a7b6-c5d4e3f2a1b0"
+                eventId: "9a4d1e2c-6b7f-4a08-b3c5-0e1f2d3c4b5a"
+                studentId: "3f6c2b0e-8d1a-4c57-9e2f-5a1b7c9d0e44"
+                status: NO_SHOW
+                markedAt: "2026-11-15T11:00:00Z"
+                markedBy: "c1f2d3e4-5a6b-7c8d-9e0f-1a2b3c4d5e6f"
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Отметка уже существует
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /internal/v1/attendance/by-event/{eventId}:
+    get:
+      tags: [internal]
+      summary: Список отметок по мероприятию
+      description: Используется админкой и для отладки.
+      operationId: listAttendanceByEvent
+      security: []
+      parameters:
+        - name: eventId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+          example: "9a4d1e2c-6b7f-4a08-b3c5-0e1f2d3c4b5a"
+        - name: status
+          in: query
+          description: Фильтр по статусу отметки
+          schema:
+            type: string
+            enum: [PRESENT, NO_SHOW, LATE]
+          example: PRESENT
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Страница отметок
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedAttendance'
+              example:
+                content:
+                  - id: "e1f2a3b4-c5d6-7e8f-9a0b-1c2d3e4f5a6b"
+                    eventId: "9a4d1e2c-6b7f-4a08-b3c5-0e1f2d3c4b5a"
+                    studentId: "3f6c2b0e-8d1a-4c57-9e2f-5a1b7c9d0e44"
+                    status: PRESENT
+                    markedAt: "2026-11-15T10:05:23Z"
+                    markedBy: "c1f2d3e4-5a6b-7c8d-9e0f-1a2b3c4d5e6f"
+                page: 0
+                size: 20
+                totalElements: 1
+                totalPages: 1
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+components:
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT от Keycloak, проверяется на API Gateway
+
+  parameters:
+    CorrelationId:
+      name: X-Correlation-Id
+      in: header
+      required: false
+      description: UUID для сквозной трассировки
+      schema: { type: string, format: uuid }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: UUID, защищает от дублей при повторном сканировании
+      schema: { type: string, format: uuid }
+    Page:
+      name: page
+      in: query
+      required: false
+      schema: { type: integer, minimum: 0, default: 0 }
+    Size:
+      name: size
+      in: query
+      required: false
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+
+  responses:
+    BadRequest:
+      description: Некорректный запрос
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    Unauthorized:
+      description: Не авторизован
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    Forbidden:
+      description: Недостаточно прав
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    NotFound:
+      description: Ресурс не найден
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+  schemas:
+
+    Problem:
+      type: object
+      required: [type, title, status]
+      properties:
+        type:          { type: string, format: uri }
+        title:         { type: string }
+        status:        { type: integer }
+        detail:        { type: string }
+        instance:      { type: string }
+        correlationId: { type: string, format: uuid }
+      example:
+        type: "https://dstu-events.local/errors/conflict"
+        title: "Already marked"
+        status: 409
+        detail: "Attendance for this registration already exists"
+        instance: "/api/v1/attendance/scan"
+        correlationId: "3f6c2b0e-8d1a-4c57-9e2f-5a1b7c9d0e44"
+
+    AttendanceStatus:
+      type: string
+      enum: [PRESENT, NO_SHOW, LATE]
+
+    AttendanceRecord:
+      type: object
+      required: [id, eventId, studentId, status, markedAt]
+      properties:
+        id:        { type: string, format: uuid }
+        eventId:   { type: string, format: uuid }
+        studentId: { type: string, format: uuid }
+        status:    { $ref: '#/components/schemas/AttendanceStatus' }
+        markedAt:  { type: string, format: date-time }
+        markedBy:  { type: string, format: uuid, description: "ID волонтёра" }
+
+    ScanQrRequest:
+      type: object
+      required: [qrToken, eventId, scannedBy]
+      properties:
+        qrToken:   { type: string, minLength: 1, maxLength: 200 }
+        eventId:   { type: string, format: uuid }
+        scannedBy: { type: string, format: uuid, description: "ID волонтёра" }
+
+    NoShowRequest:
+      type: object
+      required: [registrationId, eventId, markedBy]
+      properties:
+        registrationId: { type: string, format: uuid }
+        eventId:        { type: string, format: uuid }
+        markedBy:       { type: string, format: uuid, description: "ID волонтёра" }
+
+    PaginatedAttendance:
+      type: object
+      required: [content, page, size, totalElements, totalPages]
+      properties:
+        content:
+          type: array
+          items: { $ref: '#/components/schemas/AttendanceRecord' }
+        page:          { type: integer, minimum: 0 }
+        size:          { type: integer, minimum: 1 }
+        totalElements: { type: integer, minimum: 0 }
+        totalPages:    { type: integer, minimum: 0 }

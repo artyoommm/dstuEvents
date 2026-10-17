@@ -1,0 +1,308 @@
+openapi: 3.1.0
+
+info:
+  title: notification-service
+  version: 1.0.0
+  description: |
+    Сервис уведомлений: отправка email-писем по событиям системы
+    (подтверждение регистрации, отмена, приглашение из листа ожидания).
+    В dev-окружении SMTP-сервер заменён на Mailpit.
+    Публичных клиентских эндпоинтов нет — только внутренние для поддержки.
+  license:
+    name: Educational project
+    url: https://example.org/license
+
+servers:
+  - url: /
+    description: Internal only
+
+tags:
+  - name: internal
+    description: Внутренние эндпоинты для поддержки и отладки
+
+security:
+  - bearerAuth: []
+
+paths:
+
+  /internal/v1/notifications:
+    get:
+      tags: [internal]
+      summary: Журнал отправок
+      description: Возвращает историю отправленных и неудачных писем с фильтрами.
+      operationId: listNotifications
+      security: []
+      parameters:
+        - name: status
+          in: query
+          description: Фильтр по статусу отправки
+          schema:
+            type: string
+            enum: [QUEUED, SENT, FAILED]
+          example: SENT
+        - name: type
+          in: query
+          description: Фильтр по типу уведомления
+          schema:
+            type: string
+            enum:
+              - REGISTRATION_CONFIRMED
+              - REGISTRATION_CANCELLED
+              - WAITLIST_PROMOTED
+              - EVENT_PUBLISHED
+              - EVENT_CANCELLED
+          example: REGISTRATION_CONFIRMED
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Страница уведомлений
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedNotifications'
+              example:
+                content:
+                  - id: "7d8e9f0a-1b2c-3d4e-5f6a-7b8c9d0e1f2a"
+                    recipientEmail: "ivanov@dstu.ru"
+                    type: REGISTRATION_CONFIRMED
+                    status: SENT
+                    subject: "Регистрация на «День открытых дверей» подтверждена"
+                    createdAt: "2026-10-14T12:00:00Z"
+                    sentAt: "2026-10-14T12:00:02Z"
+                page: 0
+                size: 20
+                totalElements: 1
+                totalPages: 1
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /internal/v1/notifications/{id}:
+    get:
+      tags: [internal]
+      summary: Детали уведомления
+      operationId: getNotification
+      security: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Детали уведомления
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Notification'
+              example:
+                id: "7d8e9f0a-1b2c-3d4e-5f6a-7b8c9d0e1f2a"
+                recipientEmail: "ivanov@dstu.ru"
+                type: REGISTRATION_CONFIRMED
+                status: SENT
+                subject: "Регистрация на «День открытых дверей» подтверждена"
+                payload:
+                  registrationId: "b2e0c7f4-1a93-4f0d-8c6e-7d25a1e9f310"
+                  qrToken: "QR-9a4d1e2c-2026"
+                providerMessageId: "msg_abc123"
+                retryCount: 0
+                createdAt: "2026-10-14T12:00:00Z"
+                sentAt: "2026-10-14T12:00:02Z"
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /internal/v1/notifications/{id}/retry:
+    post:
+      tags: [internal]
+      summary: Повторить отправку
+      description: Ручной retry для случаев, когда авторетраи исчерпаны.
+      operationId: retryNotification
+      security: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '202':
+          description: Задача на повторную отправку принята
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Письмо уже успешно отправлено
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /internal/v1/notifications/send:
+    post:
+      tags: [internal]
+      summary: Отправить уведомление вручную
+      description: Админская функция — например, для рассылки объявления.
+      operationId: sendNotification
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SendNotificationRequest'
+            example:
+              recipient: "ivanov@dstu.ru"
+              templateCode: REGISTRATION_CONFIRMED
+              channel: EMAIL
+              params:
+                studentName: "Иванов Иван"
+                eventTitle: "День открытых дверей"
+                qrLink: "https://events.dstu.ru/qr/QR-9a4d1e2c-2026"
+      responses:
+        '202':
+          description: Уведомление принято в очередь
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationAccepted'
+              example:
+                notificationId: "7d8e9f0a-1b2c-3d4e-5f6a-7b8c9d0e1f2a"
+                status: QUEUED
+                queuedAt: "2026-10-14T12:00:00Z"
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          description: Шаблон не найден
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+components:
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    CorrelationId:
+      name: X-Correlation-Id
+      in: header
+      required: false
+      schema: { type: string, format: uuid }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: { type: string, format: uuid }
+    Page:
+      name: page
+      in: query
+      required: false
+      schema: { type: integer, minimum: 0, default: 0 }
+    Size:
+      name: size
+      in: query
+      required: false
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+
+  responses:
+    BadRequest:
+      description: Некорректный запрос
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    NotFound:
+      description: Ресурс не найден
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+  schemas:
+
+    Problem:
+      type: object
+      required: [type, title, status]
+      properties:
+        type:          { type: string, format: uri }
+        title:         { type: string }
+        status:        { type: integer }
+        detail:        { type: string }
+        instance:      { type: string }
+        correlationId: { type: string, format: uuid }
+      example:
+        type: "https://dstu-events.local/errors/conflict"
+        title: "Already sent"
+        status: 409
+        detail: "Notification was already successfully sent"
+        instance: "/internal/v1/notifications/7d8e9f0a-1b2c-3d4e-5f6a-7b8c9d0e1f2a/retry"
+        correlationId: "3f6c2b0e-8d1a-4c57-9e2f-5a1b7c9d0e44"
+
+    NotificationStatus:
+      type: string
+      enum: [QUEUED, SENT, FAILED]
+
+    NotificationType:
+      type: string
+      enum:
+        - REGISTRATION_CONFIRMED
+        - REGISTRATION_CANCELLED
+        - WAITLIST_PROMOTED
+        - EVENT_PUBLISHED
+        - EVENT_CANCELLED
+
+    Channel:
+      type: string
+      enum: [EMAIL, PUSH, SMS]
+
+    Notification:
+      type: object
+      required: [id, recipientEmail, type, status, createdAt]
+      properties:
+        id:                { type: string, format: uuid }
+        recipientEmail:    { type: string, format: email }
+        type:              { $ref: '#/components/schemas/NotificationType' }
+        status:            { $ref: '#/components/schemas/NotificationStatus' }
+        subject:           { type: string, maxLength: 200 }
+        payload:           { type: object, description: "Данные, подставленные в шаблон" }
+        providerMessageId: { type: string }
+        errorMessage:      { type: string }
+        retryCount:        { type: integer, minimum: 0, default: 0 }
+        createdAt:         { type: string, format: date-time }
+        sentAt:            { type: string, format: date-time }
+
+    SendNotificationRequest:
+      type: object
+      required: [recipient, templateCode, channel, params]
+      properties:
+        recipient:    { type: string, format: email }
+        templateCode: { $ref: '#/components/schemas/NotificationType' }
+        channel:      { $ref: '#/components/schemas/Channel' }
+        params:
+          type: object
+          additionalProperties: { type: string }
+
+    NotificationAccepted:
+      type: object
+      required: [notificationId, status, queuedAt]
+      properties:
+        notificationId: { type: string, format: uuid }
+        status:         { $ref: '#/components/schemas/NotificationStatus' }
+        queuedAt:       { type: string, format: date-time }
+
+    PaginatedNotifications:
+      type: object
+      required: [content, page, size, totalElements, totalPages]
+      properties:
+        content:
+          type: array
+          items: { $ref: '#/components/schemas/Notification' }
+        page:          { type: integer, minimum: 0 }
+        size:          { type: integer, minimum: 1 }
+        totalElements: { type: integer, minimum: 0 }
+        totalPages:    { type: integer, minimum: 0 }
