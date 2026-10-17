@@ -1,0 +1,386 @@
+openapi: 3.1.0
+
+info:
+  title: registration-service
+  version: 1.0.0
+  description: |
+    Сервис регистраций: запись на мероприятия, резервирование мест,
+    лист ожидания, генерация QR-токенов. Ядро бизнес-логики и саги.
+  license:
+    name: Educational project
+    url: https://example.org/license
+
+servers:
+  - url: /
+    description: API Gateway (public endpoints)
+
+tags:
+  - name: registrations
+    description: Регистрация на мероприятия
+  - name: internal
+    description: Внутренние эндпоинты для других сервисов
+
+security:
+  - bearerAuth: []
+
+paths:
+
+  /api/v1/registrations:
+    post:
+      tags: [registrations]
+      summary: Записаться на мероприятие
+      description: |
+        Создаёт заявку. Если свободных мест нет — студент попадает
+        в лист ожидания (статус WAITLISTED). Заголовок Idempotency-Key
+        защищает от дублей при повторном клике.
+      operationId: createRegistration
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateRegistrationRequest'
+            example:
+              eventId: "9a4d1e2c-6b7f-4a08-b3c5-0e1f2d3c4b5a"
+      responses:
+        '201':
+          description: Регистрация подтверждена, QR выдан
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Registration'
+              example:
+                id: "b2e0c7f4-1a93-4f0d-8c6e-7d25a1e9f310"
+                eventId: "9a4d1e2c-6b7f-4a08-b3c5-0e1f2d3c4b5a"
+                studentId: "3f6c2b0e-8d1a-4c57-9e2f-5a1b7c9d0e44"
+                status: CONFIRMED
+                qrToken: "QR-9a4d1e2c-2026"
+                createdAt: "2026-10-14T12:00:00Z"
+        '202':
+          description: Мест нет — студент в листе ожидания
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Registration'
+              example:
+                id: "b2e0c7f4-1a93-4f0d-8c6e-7d25a1e9f310"
+                eventId: "9a4d1e2c-6b7f-4a08-b3c5-0e1f2d3c4b5a"
+                studentId: "3f6c2b0e-8d1a-4c57-9e2f-5a1b7c9d0e44"
+                status: WAITLISTED
+                waitlistPosition: 4
+                createdAt: "2026-10-14T12:00:00Z"
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Студент заблокирован (BANNED)
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: Уже зарегистрирован на это мероприятие
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503':
+          description: event-service временно недоступен (Circuit Breaker)
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /api/v1/registrations/my:
+    get:
+      tags: [registrations]
+      summary: Мои регистрации
+      operationId: listMyRegistrations
+      parameters:
+        - name: status
+          in: query
+          description: Фильтр по статусу
+          schema:
+            type: string
+            enum: [PENDING, CONFIRMED, CANCELLED, EXPIRED, WAITLISTED, REJECTED]
+          example: CONFIRMED
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Страница регистраций
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedRegistrations'
+              example:
+                content:
+                  - id: "b2e0c7f4-1a93-4f0d-8c6e-7d25a1e9f310"
+                    eventId: "9a4d1e2c-6b7f-4a08-b3c5-0e1f2d3c4b5a"
+                    studentId: "3f6c2b0e-8d1a-4c57-9e2f-5a1b7c9d0e44"
+                    status: CONFIRMED
+                    qrToken: "QR-9a4d1e2c-2026"
+                    createdAt: "2026-10-14T12:00:00Z"
+                page: 0
+                size: 20
+                totalElements: 1
+                totalPages: 1
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/registrations/{id}:
+    get:
+      tags: [registrations]
+      summary: Детали регистрации
+      operationId: getRegistration
+      parameters:
+        - $ref: '#/components/parameters/RegistrationIdPath'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Регистрация
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Registration'
+              example:
+                id: "b2e0c7f4-1a93-4f0d-8c6e-7d25a1e9f310"
+                eventId: "9a4d1e2c-6b7f-4a08-b3c5-0e1f2d3c4b5a"
+                studentId: "3f6c2b0e-8d1a-4c57-9e2f-5a1b7c9d0e44"
+                status: CONFIRMED
+                qrToken: "QR-9a4d1e2c-2026"
+                createdAt: "2026-10-14T12:00:00Z"
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      tags: [registrations]
+      summary: Отменить регистрацию
+      description: |
+        Освобождает место в event-service и запускает проверку листа ожидания
+        (первому в очереди приходит уведомление).
+      operationId: cancelRegistration
+      parameters:
+        - $ref: '#/components/parameters/RegistrationIdPath'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '204':
+          description: Регистрация отменена
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Регистрация уже в финальном статусе
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /internal/v1/registrations/by-qr/{token}:
+    get:
+      tags: [internal]
+      summary: Найти регистрацию по QR-токену
+      description: Вызывается attendance-service при сканировании QR на входе.
+      operationId: getRegistrationByQr
+      security: []
+      parameters:
+        - name: token
+          in: path
+          required: true
+          description: QR-токен из QR-кода
+          schema: { type: string, maxLength: 200 }
+          example: "QR-9a4d1e2c-2026"
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Регистрация найдена
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Registration'
+              example:
+                id: "b2e0c7f4-1a93-4f0d-8c6e-7d25a1e9f310"
+                eventId: "9a4d1e2c-6b7f-4a08-b3c5-0e1f2d3c4b5a"
+                studentId: "3f6c2b0e-8d1a-4c57-9e2f-5a1b7c9d0e44"
+                status: CONFIRMED
+                qrToken: "QR-9a4d1e2c-2026"
+                createdAt: "2026-10-14T12:00:00Z"
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '410':
+          description: QR-токен просрочен или отозван
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /internal/v1/registrations/{id}/confirm:
+    post:
+      tags: [internal]
+      summary: Подтвердить регистрацию
+      description: Переводит заявку из PENDING в CONFIRMED и выдаёт QR-токен.
+      operationId: confirmRegistration
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/RegistrationIdPath'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConfirmRegistrationRequest'
+            example:
+              correlationId: "3f6c2b0e-8d1a-4c57-9e2f-5a1b7c9d0e44"
+      responses:
+        '200':
+          description: Регистрация подтверждена
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Registration'
+              example:
+                id: "b2e0c7f4-1a93-4f0d-8c6e-7d25a1e9f310"
+                eventId: "9a4d1e2c-6b7f-4a08-b3c5-0e1f2d3c4b5a"
+                studentId: "3f6c2b0e-8d1a-4c57-9e2f-5a1b7c9d0e44"
+                status: CONFIRMED
+                qrToken: "QR-9a4d1e2c-2026"
+                createdAt: "2026-10-14T12:00:00Z"
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Регистрация уже в финальном статусе
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+components:
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT от Keycloak, проверяется на API Gateway
+
+  parameters:
+    CorrelationId:
+      name: X-Correlation-Id
+      in: header
+      required: false
+      description: UUID для сквозной трассировки
+      schema: { type: string, format: uuid }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: UUID, защищает от дублей при повторных вызовах
+      schema: { type: string, format: uuid }
+    RegistrationIdPath:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    Page:
+      name: page
+      in: query
+      required: false
+      schema: { type: integer, minimum: 0, default: 0 }
+    Size:
+      name: size
+      in: query
+      required: false
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+
+  responses:
+    BadRequest:
+      description: Некорректный запрос
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    Unauthorized:
+      description: Не авторизован
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    Forbidden:
+      description: Недостаточно прав
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    NotFound:
+      description: Регистрация не найдена
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+  schemas:
+
+    Problem:
+      type: object
+      required: [type, title, status]
+      properties:
+        type:          { type: string, format: uri }
+        title:         { type: string }
+        status:        { type: integer }
+        detail:        { type: string }
+        instance:      { type: string }
+        correlationId: { type: string, format: uuid }
+      example:
+        type: "https://dstu-events.local/errors/conflict"
+        title: "Already registered"
+        status: 409
+        detail: "Student is already registered for this event"
+        instance: "/api/v1/registrations"
+        correlationId: "3f6c2b0e-8d1a-4c57-9e2f-5a1b7c9d0e44"
+
+    RegistrationStatus:
+      type: string
+      enum: [PENDING, CONFIRMED, CANCELLED, EXPIRED, WAITLISTED, REJECTED]
+
+    Registration:
+      type: object
+      required: [id, eventId, studentId, status, createdAt]
+      properties:
+        id:               { type: string, format: uuid }
+        eventId:          { type: string, format: uuid }
+        studentId:        { type: string, format: uuid }
+        status:           { $ref: '#/components/schemas/RegistrationStatus' }
+        qrToken:          { type: string, description: "Присутствует только в статусе CONFIRMED" }
+        waitlistPosition: { type: integer, minimum: 1, description: "Только в статусе WAITLISTED" }
+        createdAt:        { type: string, format: date-time }
+        expiresAt:        { type: string, format: date-time }
+
+    CreateRegistrationRequest:
+      type: object
+      required: [eventId]
+      properties:
+        eventId: { type: string, format: uuid }
+
+    ConfirmRegistrationRequest:
+      type: object
+      required: [correlationId]
+      properties:
+        correlationId: { type: string, format: uuid }
+
+    PaginatedRegistrations:
+      type: object
+      required: [content, page, size, totalElements, totalPages]
+      properties:
+        content:
+          type: array
+          items: { $ref: '#/components/schemas/Registration' }
+        page:          { type: integer, minimum: 0 }
+        size:          { type: integer, minimum: 1 }
+        totalElements: { type: integer, minimum: 0 }
+        totalPages:    { type: integer, minimum: 0 }
