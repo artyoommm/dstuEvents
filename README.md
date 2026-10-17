@@ -322,37 +322,76 @@
 
 #### Синхронные вызовы – клиент через Gateway (public API)
 
-| № | Инициатор → Получатель | Эндпоинт | Назначение |
-|---|------------------------|----------|------------|
-| 1 | client → Gateway → event | `GET /api/v1/events` | Афиша |
-| 2 | client → Gateway → registration | `POST /api/v1/registrations` | Записаться на мероприятие |
-| 3 | volunteer → Gateway → attendance | `POST /api/v1/attendance/scan` | Сканировать QR на входе |
+| № | Инициатор → Получатель | Протокол | Эндпоинт | Назначение |
+|---|------------------------|----------|----------|------------|
+| 1 | client → Gateway → event | REST | `GET /api/v1/events` | афиша с фильтрами и пагинацией |
+| 2 | client → Gateway → event | REST | `GET /api/v1/events/{id}` | карточка мероприятия |
+| 3 | client → Gateway → registration | REST | `POST /api/v1/registrations` | записаться на мероприятие (Idempotency-Key) |
+| 4 | client → Gateway → registration | REST | `GET /api/v1/registrations/my` | мои регистрации (пагинация) |
+| 5 | client → Gateway → registration | REST | `GET /api/v1/registrations/{id}` | детали конкретной регистрации |
+| 6 | client → Gateway → registration | REST | `DELETE /api/v1/registrations/{id}` | отменить регистрацию |
+| 7 | client → Gateway → profile | REST | `GET /api/v1/profile/me` | профиль и текущий рейтинг |
+| 8 | client → Gateway → profile | REST | `GET /api/v1/profile/me/points` | история баллов (пагинация) |
+| 9 | admin → Gateway → event | REST | `POST /api/v1/admin/events` | создать мероприятие |
+| 10 | admin → Gateway → event | REST | `PUT /api/v1/admin/events/{id}` | редактировать мероприятие |
+| 11 | admin → Gateway → event | REST | `DELETE /api/v1/admin/events/{id}` | отменить мероприятие |
+| 12 | volunteer → Gateway → attendance | REST | `POST /api/v1/attendance/scan` | отсканировать QR на входе (Idempotency-Key) |
+| 13 | volunteer → Gateway → attendance | REST | `POST /api/v1/attendance/no-show` | отметить неявку студента |
 
-#### Синхронные вызовы – сервис-к-сервису (internal)
+#### Синхронные вызовы – сервис-к-сервису (internal, напрямую, минуя Gateway)
 
-| № | Инициатор → Получатель | Эндпоинт | Назначение |
-|---|------------------------|----------|------------|
-| 4 | registration → event | `POST /internal/v1/events/{id}/seats/reserve` | Резерв места |
-| 5 | registration → profile | `GET /internal/v1/students/{id}/status` | Проверка статуса студента |
-| 6 | attendance → registration | `GET /internal/v1/registrations/by-qr/{token}` | Валидация QR |
+| № | Инициатор → Получатель | Протокол | Эндпоинт | Назначение |
+|---|------------------------|----------|----------|------------|
+| 14 | registration → event | REST | `POST /internal/v1/events/{id}/seats/reserve` | зарезервировать место под заявку |
+| 15 | registration → event | REST | `POST /internal/v1/events/{id}/seats/release` | освободить место (компенсация) |
+| 16 | registration → profile | REST | `GET /internal/v1/students/{id}/status` | проверить статус студента (ACTIVE / BANNED) |
+| 17 | attendance → registration | REST | `GET /internal/v1/registrations/by-qr/{token}` | валидировать QR-код на входе |
+| 18 | registration → registration | REST | `POST /internal/v1/registrations/{id}/confirm` | подтвердить регистрацию из листа ожидания |
+
+#### Синхронные вызовы – к внешним системам
+
+| № | Инициатор → Получатель | Протокол | Эндпоинт | Назначение |
+|---|------------------------|----------|----------|------------|
+| 19 | Gateway → Keycloak | HTTPS | `GET /realms/.../certs` | проверка JWT (кешируется) |
+| 20 | notification → Mailpit (dev) | SMTP | `send` | отправка письма студенту (в проде – реальный SMTP) |
 
 #### Асинхронные – публикация событий (RabbitMQ)
 
-| № | Издатель | Событие | Подписчики |
+| № | Издатель | Событие | Назначение |
 |---|----------|---------|------------|
-| 7 | registration | `registration.confirmed` | notification |
-| 8 | attendance | `attendance.marked` | profile |
-| 9 | event | `event.cancelled` | registration, notification |
+| 21 | registration | `registration.confirmed` | регистрация подтверждена, QR выдан |
+| 22 | registration | `registration.cancelled` | регистрация отменена |
+| 23 | registration | `registration.waitlisted` | студент добавлен в лист ожидания |
+| 24 | registration | `registration.waitlist_promoted` | студент приглашён из листа ожидания |
+| 25 | attendance | `attendance.marked` | посещение засчитано |
+| 26 | attendance | `attendance.no_show` | неявка зафиксирована |
+| 27 | event | `event.published` | мероприятие опубликовано в афише |
+| 28 | event | `event.cancelled` | мероприятие отменено |
+
+#### Асинхронные – подписка на события (RabbitMQ)
+
+| № | Подписчик | Событие | Реакция |
+|---|-----------|---------|---------|
+| 29 | notification | `registration.confirmed` | отправить письмо с QR-кодом |
+| 30 | notification | `registration.cancelled` | отправить письмо об отмене |
+| 31 | notification | `registration.waitlisted` | отправить письмо «вы в листе ожидания» |
+| 32 | notification | `registration.waitlist_promoted` | отправить письмо «место освободилось» |
+| 33 | notification | `event.published` | разослать анонс нового мероприятия |
+| 34 | notification | `event.cancelled` | разослать уведомления об отмене мероприятия |
+| 35 | profile | `attendance.marked` | начислить баллы студенту (PRESENT) |
+| 36 | profile | `attendance.no_show` | списать баллы (NO_SHOW) |
+| 37 | registration | `event.cancelled` | массово отменить регистрации на это мероприятие |
 
 #### Сага регистрации – компенсации при сбоях
 
 | Сбой | Компенсирующее действие |
 |------|-------------------------|
-| Нет мест | Студент переводится в `WAITLISTED`, публикуется `registration.waitlisted` |
-| Студент забанен | registration вызывает `POST /seats/release`, статус `REJECTED` |
-| event-service недоступен | Circuit Breaker, клиенту 503, данные не сохраняются |
-| Notification упал | Retry через Dead Letter Queue, регистрация не ломается |
-| Студент не пришёл | attendance публикует `attendance.no_show`, profile списывает баллы |
+| Мест нет (лимит исчерпан) | registration → статус `WAITLISTED`, публикуется `registration.waitlisted` |
+| Студент в статусе `BANNED` | registration вызывает `POST /seats/release` (возврат места), статус `REJECTED` |
+| `event-service` недоступен | Circuit Breaker: 3 попытки, затем 503 клиенту; данные не сохраняются |
+| `notification-service` упал | Событие остаётся в очереди, retry с backoff, после N попыток → Dead Letter Queue |
+| Студент не пришёл | attendance публикует `attendance.no_show` → profile списывает баллы |
+| Дубликат события (retry) | все consumer'ы хранят обработанные `eventId`, повтор игнорируется |
 | Двойное сканирование QR | attendance проверяет `eventId` + `token` в Redis, повтор игнорируется |
 
 ---
