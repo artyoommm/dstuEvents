@@ -170,7 +170,7 @@
 | **Название** | `event-service` |
 | **Ответственность** | Ведёт жизненный цикл мероприятий: создание, публикация, редактирование, отмена. Отдаёт афишу и расписание. Управляет резервированием мест по внутреннему запросу от registration-service. |
 | **Владеет данными** | `Event` (мероприятие), `Venue` (аудитория), `SeatLimit` (лимит мест), `Schedule` (расписание) — единственный источник истины по этим сущностям. |
-| **Предоставляет (sync)** | **Публичные:** `GET /api/v1/events` (афиша с фильтрами и пагинацией), `GET /api/v1/events/{id}`, `POST /api/v1/events`, `PATCH /api/v1/events/{id}`, `DELETE /api/v1/events/{id}`.<br>**Внутренние:** `POST /internal/v1/events/{id}/seats/reserve`, `POST /internal/v1/events/{id}/seats/release`. |
+| **Предоставляет (sync)** | **Публичные:**<br>• `GET /api/v1/events` — афиша с фильтрами по типу и датам, с пагинацией<br>• `GET /api/v1/events/{id}` — карточка мероприятия<br>• `POST /api/v1/events` — создать мероприятие (роль `admin`)<br>• `PATCH /api/v1/events/{id}` — отредактировать мероприятие (роль `admin`)<br>• `DELETE /api/v1/events/{id}` — отменить мероприятие (роль `admin`), публикует `event.cancelled`<br>**Внутренние:**<br>• `POST /internal/v1/events/{id}/seats/reserve` — зарезервировать место (вызывает registration-service)<br>• `POST /internal/v1/events/{id}/seats/release` — освободить место (компенсация, вызывает registration-service) |
 | **Публикует события** | `event.published`, `event.cancelled`, `event.completed` |
 | **Зависит от (sync)** | Синхронных вызовов других сервисов не делает. JWT-токен проверяет API Gateway. На события не подписан. |
 | **НФТ** | Высокая нагрузка на чтение (афишу открывают массово в начале семестра), запись редкая — пишет только администратор. Критичность высокая: если афиша не открывается, система бесполезна. Требования к задержке чтения — низкая, обеспечивается кэшем в Redis. |
@@ -183,7 +183,7 @@
 | **Название** | `registration-service` |
 | **Ответственность** | Записывает студентов на мероприятия, резервирует места, ведёт лист ожидания, генерирует QR-коды. Ядро системы — здесь сосредоточена вся конкурентная логика за места. |
 | **Владеет данными** | `Registration` (регистрация), `WaitlistEntry` (запись в листе ожидания), `QrToken` (QR-токен), `SeatReservation` (бронь места). |
-| **Предоставляет (sync)** | **Публичные:** `POST /api/v1/registrations` (с заголовком `Idempotency-Key` — «ключ идемпотентности», защита от двойной отправки), `GET /api/v1/registrations/my` (с пагинацией), `DELETE /api/v1/registrations/{id}`.<br>**Внутренние:** `GET /internal/v1/registrations/by-qr/{token}`, `POST /internal/v1/registrations/{id}/confirm`. |
+| **Предоставляет (sync)** | **Публичные:**<br>• `POST /api/v1/registrations` — записаться на мероприятие (требует `Idempotency-Key`); если мест нет — ставит в лист ожидания<br>• `GET /api/v1/registrations/my` — список своих регистраций с пагинацией<br>• `DELETE /api/v1/registrations/{id}` — отменить свою регистрацию, освободить место<br>**Внутренние:**<br>• `GET /internal/v1/registrations/by-qr/{token}` — найти регистрацию по QR-токену (вызывает attendance-service)<br>• `POST /internal/v1/registrations/{id}/confirm` — подтвердить регистрацию (`PENDING` → `CONFIRMED`) |
 | **Публикует события** | `registration.confirmed`, `registration.cancelled`, `registration.waitlisted`, `registration.waitlist_promoted` |
 | **Зависит от (sync)** | **Синхронно вызывает:** `event-service` (резерв/освобождение места), `profile-service` (проверка, что студент в статусе `ACTIVE`). **Подписан на событие:** `event.cancelled` — чтобы массово отменить регистрации при отмене мероприятия. |
 | **НФТ** | Пиковая нагрузка в момент открытия регистрации на популярное мероприятие — все ломятся одновременно. Критичность высокая. Требования к задержке — низкая. Обязательна идемпотентность по `Idempotency-Key` — иначе двойной клик пользователя создаст две регистрации. |
@@ -196,7 +196,7 @@
 | **Название** | `attendance-service` |
 | **Ответственность** | Принимает QR-коды от волонтёров через мобильную версию сайта, валидирует их через registration-service, фиксирует посещение или неявку. |
 | **Владеет данными** | `AttendanceRecord` (отметка о посещении), `ScanLog` (журнал сканирований). |
-| **Предоставляет (sync)** | **Публичные:** `POST /api/v1/attendance/scan` (с `Idempotency-Key`), `POST /api/v1/attendance/no-show`.<br>**Внутренние:** `GET /internal/v1/attendance/by-event/{eventId}`. |
+| **Предоставляет (sync)** | **Публичные:**<br>• `POST /api/v1/attendance/scan` — отсканировать QR на входе, зафиксировать посещение (требует `Idempotency-Key`)<br>• `POST /api/v1/attendance/no-show` — отметить неявку студента<br>**Внутренние:**<br>• `GET /internal/v1/attendance/by-event/{eventId}` — список всех отметок по мероприятию (для админки и отладки) |
 | **Публикует события** | `attendance.marked`, `attendance.no_show` |
 | **Зависит от (sync)** | **Синхронно вызывает:** `registration-service` (получить регистрацию по QR-токену). Больше ни от кого не зависит. |
 | **НФТ** | Пиковая нагрузка в первые минуты мероприятия — волонтёры массово сканируют QR. Критичность средняя: при сбое волонтёр может отметить посещение вручную по бумажному списку. Требования к задержке — умеренная. |
@@ -209,7 +209,7 @@
 | **Название** | `profile-service` |
 | **Ответственность** | Хранит профиль студента, начисляет и списывает баллы, считает рейтинг, ведёт историю достижений. |
 | **Владеет данными** | `StudentProfile` (профиль студента), `PointsTransaction` (транзакции баллов), `Achievement` (достижения). |
-| **Предоставляет (sync)** | **Публичные:** `GET /api/v1/profile/me`, `GET /api/v1/profile/me/points` (с пагинацией).<br>**Внутренние:** `GET /internal/v1/students/{id}/status`. |
+| **Предоставляет (sync)** | **Публичные:**<br>• `GET /api/v1/profile/me` — мой профиль (ФИО, группа, статус, рейтинг)<br>• `GET /api/v1/profile/me/points` — история начислений и списаний баллов с пагинацией<br>**Внутренние:**<br>• `GET /internal/v1/students/{id}/status` — проверить статус студента (`ACTIVE` / `BANNED` / `GRADUATED`), вызывает registration-service |
 | **Публикует события** | `points.awarded`, `points.deducted` (задел на будущее — например, для рассылки поздравлений). |
 | **Зависит от (sync)** | **Подписан на события:** `attendance.marked` (начислить баллы), `attendance.no_show` (списать баллы). Синхронных вызовов других сервисов не делает. |
 | **НФТ** | Умеренная нагрузка на чтение и низкая на запись — основная работа идёт через события. Критичность высокая: баллы нельзя терять. Каждая транзакция с баллами логируется (журнал append-only — «только добавление»). |
@@ -222,7 +222,7 @@
 | **Название** | `notification-service` |
 | **Ответственность** | Отправляет email-письма по событиям: подтверждение регистрации с QR-кодом, отмена, приглашение из листа ожидания, анонс нового мероприятия. |
 | **Владеет данными** | `NotificationLog` (лог отправок), `Template` (шаблон письма), `Channel` (канал доставки). |
-| **Предоставляет (sync)** | Исходящих синхронных API почти нет — только один внутренний, для ручной отправки администратором: `POST /internal/v1/notifications/send`. |
+| **Предоставляет (sync)** | **Внутренние:**<br>• `POST /internal/v1/notifications/send` — отправить письмо вручную (админская функция, требует `Idempotency-Key`)<br>• `GET /internal/v1/notifications` — журнал отправок с фильтрами (для поддержки и отладки)<br>• `GET /internal/v1/notifications/{id}` — детали конкретной отправки<br>• `POST /internal/v1/notifications/{id}/retry` — повторить отправку вручную, если авторетраи исчерпаны |
 | **Публикует события** | Событий не публикует, только потребляет. |
 | **Зависит от (sync)** | **Подписан на события:** `registration.confirmed`, `registration.cancelled`, `registration.waitlisted`, `registration.waitlist_promoted`, `event.published`, `event.cancelled`. **Внешняя система:** SMTP-сервер (в учебной конфигурации — Mailpit). |
 | **НФТ** | Умеренная нагрузка на отправку. Критичность низкая: падение уведомлений не ломает основной сценарий — студент всё равно записан, QR-код можно посмотреть в личном кабинете. Требования к задержке — мягкие, доставка полностью асинхронная. |
@@ -359,25 +359,17 @@
 
 ## 5. Контракты API
 
-### 5.1. Краткое описание API сервисов
+### 5.1. Спецификации API
 
-- **`event-service`** – управляет каталогом мероприятий. Публичные методы позволяют студентам смотреть афишу, а администраторам — создавать и отменять события. Внутренние методы используются `registration-service` для резервирования и освобождения мест под конкретные заявки.
-- **`registration-service`** – ядро системы. Принимает заявки от студентов, проверяет лимиты, управляет листом ожидания и генерирует QR-коды. Содержит логику саги (компенсации при сбоях) и защищён заголовком `Idempotency-Key` от дублирования заявок при повторных кликах.
-- **`attendance-service`** – работает с волонтёрами на входе. Принимает отсканированные QR-коды, валидирует их через `registration-service` и фиксирует посещение (или неявку) в собственной базе. Устойчив к повторным сканам за счёт кэша в Redis.
-- **`profile-service`** – хранит профиль студента, статус (активен, забанен, выпустился). Начисляет и списывает баллы на основе событий от `attendance-service`. Все транзакции с баллами записываются в append-only журнал для аудита.
-- **`notification-service`** – слушает очередь RabbitMQ и отправляет email-письма (QR-коды, подтверждения, отмены). Имеет внутренний эндпоинт для ручной отправки администратором, но основной сценарий полностью асинхронный.
+| Сервис | Спецификация | Краткое описание |
+|--------|--------------|------------------|
+| event-service | [event-service.yaml](api/event-service.yaml) | Каталог мероприятий, резервирование и освобождение мест |
+| registration-service | [registration-service.yaml](api/registration-service.yaml) | Регистрация на мероприятия, лист ожидания, генерация QR-кодов |
+| attendance-service | [attendance-service.yaml](api/attendance-service.yaml) | Сканирование QR на входе, фиксация посещений и неявок |
+| profile-service | [profile-service.yaml](api/profile-service.yaml) | Профиль студента, статус, баллы, рейтинг |
+| notification-service | [notification-service.yaml](api/notification-service.yaml) | Отправка email-уведомлений, журнал отправок |
 
-### 5.2. Спецификации API
-
-| Сервис | Спецификация |
-|--------|--------------|
-| event-service | [event-service.yaml](api/event-service.yaml) |
-| registration-service | [registration-service.yaml](api/registration-service.yaml) |
-| attendance-service | [attendance-service.yaml](api/attendance-service.yaml) |
-| profile-service | [profile-service.yaml](api/profile-service.yaml) |
-| notification-service | [notification-service.yaml](api/notification-service.yaml) |
-
-### 5.3. Асинхронные события
+### 5.2. Асинхронные события
 Спецификация событий: [events.yaml](api/events.yaml) (AsyncAPI 2.6.0).
 
 | Событие | Топик | Издатель | Подписчики | Ссылка на схему |
