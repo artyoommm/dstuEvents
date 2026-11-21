@@ -1,6 +1,6 @@
-from datetime import datetime
 from typing import Optional
 from pydantic import BaseModel, Field
+from datetime import datetime, timezone
 
 # -------- Routing keys --------
 TOPIC_REGISTRATION_CONFIRMED         = "registration.confirmed"
@@ -23,13 +23,13 @@ class EventEnvelope(BaseModel):
     payload: dict
 
 
-# -------- Helpers --------
+
 def make_envelope(event_type: str, payload: dict, correlation_id: str) -> dict:
     import uuid
     return EventEnvelope(
         eventId=str(uuid.uuid4()),
         eventType=event_type,
-        occurredAt=datetime.utcnow(),
+        occurredAt=datetime.now(timezone.utc),
         correlationId=correlation_id or str(uuid.uuid4()),
         payload=payload,
     ).model_dump(mode="json")

@@ -1,9 +1,7 @@
 services:
   rabbitmq:
     image: rabbitmq:3.13-management
-    ports:
-      - "5672:5672"
-      - "15672:15672"
+    ports: ["5672:5672", "15672:15672"]
     environment:
       RABBITMQ_DEFAULT_USER: dstu
       RABBITMQ_DEFAULT_PASS: dstu
@@ -15,6 +13,68 @@ services:
 
   mailpit:
     image: axllent/mailpit:latest
-    ports:
-      - "1025:1025"
-      - "8025:8025"
+    ports: ["1025:1025", "8025:8025"]
+
+  event-service:
+    build: { context: ., args: { SERVICE_DIR: services/event-service, PORT: 8001 } }
+    environment: { AMQP_URL: amqp://dstu:dstu@rabbitmq:5672/, DB_PATH: /data/event.db }
+    volumes: ["event-data:/data"]
+    ports: ["8001:8001"]
+    depends_on: [rabbitmq]
+
+  profile-service:
+    build: { context: ., args: { SERVICE_DIR: services/profile-service, PORT: 8004 } }
+    environment: { AMQP_URL: amqp://dstu:dstu@rabbitmq:5672/, DB_PATH: /data/profile.db }
+    volumes: ["profile-data:/data"]
+    ports: ["8004:8004"]
+    depends_on: [rabbitmq]
+
+  registration-service:
+    build: { context: ., args: { SERVICE_DIR: services/registration-service, PORT: 8002 } }
+    environment:
+      AMQP_URL: amqp://dstu:dstu@rabbitmq:5672/
+      EVENT_SERVICE_URL: http://event-service:8001
+      PROFILE_SERVICE_URL: http://profile-service:8004
+      DB_PATH: /data/registration.db
+    volumes: ["registration-data:/data"]
+    ports: ["8002:8002"]
+    depends_on: [rabbitmq, event-service, profile-service]
+
+  attendance-service:
+    build: { context: ., args: { SERVICE_DIR: services/attendance-service, PORT: 8003 } }
+    environment:
+      AMQP_URL: amqp://dstu:dstu@rabbitmq:5672/
+      REGISTRATION_SERVICE_URL: http://registration-service:8002
+      DB_PATH: /data/attendance.db
+    volumes: ["attendance-data:/data"]
+    ports: ["8003:8003"]
+    depends_on: [rabbitmq, registration-service]
+
+  notification-service:
+    build: { context: ., args: { SERVICE_DIR: services/notification-service, PORT: 8005 } }
+    environment:
+      AMQP_URL: amqp://dstu:dstu@rabbitmq:5672/
+      SMTP_HOST: mailpit
+      SMTP_PORT: 1025
+      DB_PATH: /data/notification.db
+    volumes: ["notification-data:/data"]
+    ports: ["8005:8005"]
+    depends_on: [rabbitmq, mailpit]
+
+  gateway:
+    build: { context: ., args: { SERVICE_DIR: gateway, PORT: 8000 } }
+    environment:
+      EVENT_SERVICE_URL: http://event-service:8001
+      REGISTRATION_SERVICE_URL: http://registration-service:8002
+      ATTENDANCE_SERVICE_URL: http://attendance-service:8003
+      PROFILE_SERVICE_URL: http://profile-service:8004
+      NOTIFICATION_SERVICE_URL: http://notification-service:8005
+    ports: ["8000:8000"]
+    depends_on: [event-service, registration-service, attendance-service, profile-service, notification-service]
+
+volumes:
+  event-data:
+  profile-data:
+  registration-data:
+  attendance-data:
+  notification-data:

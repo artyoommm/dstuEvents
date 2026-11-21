@@ -1,0 +1,79 @@
+{
+  "info": {
+    "name": "DSTU Events Lab 4",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "1. Create Event (Admin)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {"key": "Content-Type", "value": "application/json"},
+          {"key": "X-Roles", "value": "admin"},
+          {"key": "Idempotency-Key", "value": "{{$guid}}"}
+        ],
+        "url": "http://localhost:8000/api/v1/admin/events",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"title\": \"ДОД ИТ\",\n  \"type\": \"OPEN_DAY\",\n  \"startsAt\": \"2026-12-01T10:00:00Z\",\n  \"endsAt\": \"2026-12-01T14:00:00Z\",\n  \"venueId\": 12,\n  \"seatLimit\": 5\n}"
+        }
+      }
+    },
+    {
+      "name": "2. Publish Event",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "X-Roles", "value": "admin"}],
+        "url": "http://localhost:8000/api/v1/admin/events/{{event_id}}/publish"
+      }
+    },
+    {
+      "name": "3. Register (Happy Path)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {"key": "Content-Type", "value": "application/json"},
+          {"key": "X-Student-Id", "value": "u-active"},
+          {"key": "Idempotency-Key", "value": "{{$guid}}"}
+        ],
+        "url": "http://localhost:8000/api/v1/registrations",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"eventId\": \"{{event_id}}\"\n}"
+        }
+      }
+    },
+    {
+      "name": "4. Register (Banned Student)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {"key": "Content-Type", "value": "application/json"},
+          {"key": "X-Student-Id", "value": "u-banned"},
+          {"key": "Idempotency-Key", "value": "{{$guid}}"}
+        ],
+        "url": "http://localhost:8000/api/v1/registrations",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"eventId\": \"{{event_id}}\"\n}"
+        }
+      }
+    },
+    {
+      "name": "5. Scan QR",
+      "request": {
+        "method": "POST",
+        "header": [
+          {"key": "Content-Type", "value": "application/json"},
+          {"key": "Idempotency-Key", "value": "{{$guid}}"}
+        ],
+        "url": "http://localhost:8000/api/v1/attendance/scan",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"qrToken\": \"{{qr_token}}\",\n  \"eventId\": \"{{event_id}}\",\n  \"scannedBy\": \"volunteer-1\"\n}"
+        }
+      }
+    }
+  ]
+}

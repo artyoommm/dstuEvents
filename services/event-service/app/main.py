@@ -55,7 +55,6 @@ CREATE TABLE IF NOT EXISTS seat_reservations (
 conn.commit()
 ensure_table(conn)
 
-# Добавляем тестовые аудитории
 if conn.execute("SELECT COUNT(*) FROM venues").fetchone()[0] == 0:
     conn.executemany("INSERT INTO venues (id, building, room, capacity) VALUES (?,?,?,?)", [
         (12, "Корпус 8", "401", 200),
